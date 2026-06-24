@@ -113,12 +113,12 @@ export class GitService {
     return branches;
   }
 
-  async getCurrentBranch(dir: string) {
+  async getCurrentBranch(dir: string): Promise<string | undefined> {
     const branch = await git.currentBranch({
       fs,
       dir,
     });
-    return branch;
+    return branch as string | undefined;
   }
 
   async checkoutBranch({ dir, ref }: { dir: string; ref: string }) {
