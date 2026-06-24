@@ -1,0 +1,425 @@
+import { NextRequest, NextResponse } from 'next/server';
+
+const MODEL_PROVIDER_MAP: Record<string, { provider: string; model: string }> = {
+  'gpt-4': { provider: 'openai', model: 'gpt-4' },
+  'gpt-4o': { provider: 'openai', model: 'gpt-4o' },
+  'gpt-4-turbo': { provider: 'openai', model: 'gpt-4-turbo' },
+  'claude-3-opus': { provider: 'anthropic', model: 'claude-3-opus-20240229' },
+  'claude-3-sonnet': { provider: 'anthropic', model: 'claude-3-sonnet-20240229' },
+  'gemini-1.5-pro': { provider: 'google', model: 'gemini-1.5-pro' },
+  'deepseek-v3': { provider: 'deepseek', model: 'deepseek-chat' },
+};
+
+// Mock responses for code generation
+const getMockCodeContent = (fileType: string, description: string) => {
+  switch (fileType) {
+    case 'packageJson':
+      return JSON.stringify({
+        name: "samai-app",
+        version: "0.1.0",
+        private: true,
+        scripts: {
+          dev: "next dev",
+          build: "next build",
+          start: "next start"
+        },
+        dependencies: {
+          next: "^15.0.0",
+          react: "^19.0.0",
+          "react-dom": "^19.0.0",
+          prisma: "^5.0.0",
+          "@prisma/client": "^5.0.0",
+          bcrypt: "^5.1.0",
+          jsonwebtoken: "^9.0.0"
+        },
+        devDependencies: {
+          tailwindcss: "^3.4.0",
+          postcss: "^8.4.0",
+          autoprefixer: "^10.4.0",
+          typescript: "^5.3.0"
+        }
+      }, null, 2);
+    case 'prismaSchema':
+      return `generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}`;
+    case 'libPrisma':
+      return `import { PrismaClient } from '@prisma/client'
+
+const prisma = new PrismaClient()
+
+export default prisma`;
+    case 'middleware':
+      return `import { NextResponse } from 'next/server'
+import type { NextRequest } from 'next/server'
+
+export function middleware(request: NextRequest) {
+  const token = request.cookies.get('auth_token')
+  if (request.nextUrl.pathname.startsWith('/dashboard') && !token) {
+    return NextResponse.redirect(new URL('/login', request.url))
+  }
+  return NextResponse.next()
+}
+
+export const config = {
+  matcher: '/dashboard/:path*'
+}`;
+    case 'authRouteRegister':
+      return `import { NextResponse } from 'next/server'
+import bcrypt from 'bcrypt'
+import prisma from '@/lib/prisma'
+
+export async function POST(request: Request) {
+  try {
+    const { email, password, name } = await request.json()
+    const hashedPassword = await bcrypt.hash(password, 10)
+    const user = await prisma.user.create({
+      data: { email, password: hashedPassword, name }
+    })
+    return NextResponse.json({ user: { id: user.id, email: user.email, name: user.name } })
+  } catch {
+    return NextResponse.json({ error: 'Registration failed' }, { status: 500 })
+  }
+}`;
+    case 'authRouteLogin':
+      return `import { NextResponse } from 'next/server'
+import bcrypt from 'bcrypt'
+import jwt from 'jsonwebtoken'
+import prisma from '@/lib/prisma'
+
+export async function POST(request: Request) {
+  try {
+    const { email, password } = await request.json()
+    const user = await prisma.user.findUnique({ where: { email } })
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+      return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
+    }
+    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET || 'secret')
+    const response = NextResponse.json({ user: { id: user.id, email: user.email } })
+    response.cookies.set('auth_token', token, { httpOnly: true })
+    return response
+  } catch {
+    return NextResponse.json({ error: 'Login failed' }, { status: 500 })
+  }
+}`;
+    case 'authRouteMe':
+      return `import { NextResponse } from 'next/server'
+import jwt from 'jsonwebtoken'
+import prisma from '@/lib/prisma'
+
+export async function GET(request: Request) {
+  try {
+    const cookie = request.headers.get('cookie')
+    const token = cookie?.split('auth_token=')[1]?.split(';')[0]
+    if (!token) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret') as any
+    const user = await prisma.user.findUnique({ where: { id: decoded.userId } })
+    if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 })
+    return NextResponse.json({ user: { id: user.id, email: user.email, name: user.name } })
+  } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+}`;
+    case 'layout':
+      return `import type { Metadata } from 'next'
+import './globals.css'
+
+export const metadata: Metadata = {
+  title: 'SAM AI App',
+  description: 'Generated by SAM AI',
+}
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body className="min-h-screen bg-gray-50">{children}</body>
+    </html>
+  )
+}`;
+    case 'loginPage':
+      return `'use client'
+import { useState } from 'react'
+import { useRouter } from 'next/navigation'
+
+export default function LoginPage() {
+  const router = useRouter()
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    })
+    if (res.ok) router.push('/dashboard')
+  }
+
+  return (
+    <div className="flex min-h-screen items-center justify-center">
+      <form onSubmit={handleSubmit} className="w-full max-w-md p-8 bg-white rounded-xl shadow-lg">
+        <h1 className="text-2xl font-bold mb-6">Login</h1>
+        <div className="space-y-4">
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" className="w-full p-3 border rounded-lg" />
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" className="w-full p-3 border rounded-lg" />
+          <button type="submit" className="w-full p-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700">Login</button>
+        </div>
+      </form>
+    </div>
+  )
+}`;
+    case 'registerPage':
+      return `'use client'
+import { useState } from 'react'
+import { useRouter } from 'next/navigation'
+
+export default function RegisterPage() {
+  const router = useRouter()
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const res = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, email, password })
+    })
+    if (res.ok) router.push('/login')
+  }
+
+  return (
+    <div className="flex min-h-screen items-center justify-center">
+      <form onSubmit={handleSubmit} className="w-full max-w-md p-8 bg-white rounded-xl shadow-lg">
+        <h1 className="text-2xl font-bold mb-6">Register</h1>
+        <div className="space-y-4">
+          <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" className="w-full p-3 border rounded-lg" />
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" className="w-full p-3 border rounded-lg" />
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" className="w-full p-3 border rounded-lg" />
+          <button type="submit" className="w-full p-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700">Register</button>
+        </div>
+      </form>
+    </div>
+  )
+}`;
+    case 'dashboardPage':
+      return `export default function DashboardPage() {
+  return (
+    <div className="flex min-h-screen">
+      <aside className="w-64 bg-gray-900 text-white p-6">
+        <h2 className="text-xl font-bold mb-6">Dashboard</h2>
+        <nav className="space-y-2">
+          <a href="/dashboard" className="block p-3 rounded bg-purple-700">Home</a>
+        </nav>
+      </aside>
+      <main className="flex-1 p-8">
+        <h1 className="text-3xl font-bold mb-8">Welcome!</h1>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="p-6 bg-white rounded-xl shadow">
+            <h3 className="font-semibold mb-2">Stats Card</h3>
+            <p className="text-3xl font-bold text-purple-600">123</p>
+          </div>
+          <div className="p-6 bg-white rounded-xl shadow">
+            <h3 className="font-semibold mb-2">Stats Card</h3>
+            <p className="text-3xl font-bold text-purple-600">456</p>
+          </div>
+          <div className="p-6 bg-white rounded-xl shadow">
+            <h3 className="font-semibold mb-2">Stats Card</h3>
+            <p className="text-3xl font-bold text-purple-600">789</p>
+          </div>
+        </div>
+      </main>
+    </div>
+  )
+}`;
+    default:
+      return `// Code for ${fileType}`;
+  }
+};
+
+async function callLLM(messages: { role: string; content: string }[], model: string = 'gpt-4o') {
+  const modelConfig = MODEL_PROVIDER_MAP[model];
+  if (!modelConfig) throw new Error('Unsupported model');
+
+  let response;
+
+  try {
+    if (modelConfig.provider === 'openai' || modelConfig.provider === 'deepseek') {
+      const apiKey = modelConfig.provider === 'deepseek' ? process.env.DEEPSEEK_API_KEY : process.env.OPENAI_API_KEY;
+      const baseUrl = modelConfig.provider === 'deepseek' ? 'https://api.deepseek.com/v1' : 'https://api.openai.com/v1';
+
+      if (!apiKey) throw new Error('API key not configured');
+
+      response = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: modelConfig.model,
+          messages,
+          temperature: 0.7,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error?.message || 'API request failed');
+      return data.choices[0].message.content;
+    } else if (modelConfig.provider === 'anthropic') {
+      const apiKey = process.env.ANTHROPIC_API_KEY;
+      if (!apiKey) throw new Error('API key not configured');
+
+      response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: modelConfig.model,
+          messages: messages.map((m) => ({ role: m.role as any, content: m.content })),
+          max_tokens: 4096,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error?.message || 'API request failed');
+      return data.content[0].text;
+    } else if (modelConfig.provider === 'google') {
+      const apiKey = process.env.GOOGLE_API_KEY;
+      if (!apiKey) throw new Error('API key not configured');
+
+      response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${modelConfig.model}:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: messages.map((m) => ({
+              role: m.role === 'user' ? 'user' : 'model',
+              parts: [{ text: m.content }],
+            })),
+          }),
+        }
+      );
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error?.message || 'API request failed');
+      return data.candidates[0].content.parts[0].text;
+    }
+  } catch {
+    return null;
+  }
+
+  throw new Error('Unsupported provider');
+}
+
+function extractCodeFromMarkdown(markdown: string) {
+  const codeBlockRegex = /```[\s\S]*?\n([\s\S]*?)```/;
+  const match = markdown.match(codeBlockRegex);
+  if (match) {
+    return match[1].trim();
+  }
+  return markdown.trim();
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { description, fileType } = body;
+
+    if (!description || !fileType) {
+      return NextResponse.json({ error: 'Description and fileType are required' }, { status: 400 });
+    }
+
+    let systemPrompt = '';
+    let userPrompt = '';
+
+    switch (fileType) {
+      case 'prismaSchema':
+        systemPrompt = 'You are a database designer. Generate a production-ready Prisma schema for a full-stack application. Include User model and all necessary models. Respond with only the Prisma code, no extra text.';
+        userPrompt = `Generate a Prisma schema for a ${description}. Include User model, authentication fields, and all other necessary models. Use cuid() for IDs, proper relations, and timestamps.`;
+        break;
+      case 'authRouteRegister':
+        systemPrompt = 'You are a backend developer. Generate a production-ready Next.js API route for user registration. Use bcrypt for password hashing. Respond with only the code, no extra text.';
+        userPrompt = `Generate a Next.js API route (app/api/auth/register/route.ts) for user registration for a ${description}. Use bcrypt for password hashing, Prisma for database, and return proper JSON responses.`;
+        break;
+      case 'authRouteLogin':
+        systemPrompt = 'You are a backend developer. Generate a production-ready Next.js API route for user login. Use bcrypt and JWT. Respond with only the code, no extra text.';
+        userPrompt = `Generate a Next.js API route (app/api/auth/login/route.ts) for user login for a ${description}. Use bcrypt to verify password, JWT for authentication, and return proper JSON responses.`;
+        break;
+      case 'authRouteMe':
+        systemPrompt = 'You are a backend developer. Generate a production-ready Next.js API route to get current user. Use JWT. Respond with only the code, no extra text.';
+        userPrompt = `Generate a Next.js API route (app/api/auth/me/route.ts) to get current user for a ${description}. Use JWT for authentication and return proper JSON responses.`;
+        break;
+      case 'loginPage':
+        systemPrompt = 'You are a frontend developer. Generate a production-ready login page using Next.js 15, Tailwind CSS, and React. Respond with only the code, no extra text.';
+        userPrompt = `Generate a login page (app/login/page.tsx) for a ${description}. Use Tailwind CSS, handle form submission, and redirect after login.`;
+        break;
+      case 'registerPage':
+        systemPrompt = 'You are a frontend developer. Generate a production-ready registration page using Next.js 15, Tailwind CSS, and React. Respond with only the code, no extra text.';
+        userPrompt = `Generate a registration page (app/register/page.tsx) for a ${description}. Use Tailwind CSS, handle form submission, and redirect after registration.`;
+        break;
+      case 'dashboardPage':
+        systemPrompt = 'You are a frontend developer. Generate a production-ready dashboard page using Next.js 15, Tailwind CSS, and React. Respond with only the code, no extra text.';
+        userPrompt = `Generate a dashboard page (app/dashboard/page.tsx) for a ${description}. Use Tailwind CSS, include a sidebar, navigation, and some stats cards.`;
+        break;
+      case 'layout':
+        systemPrompt = 'You are a frontend developer. Generate a production-ready root layout using Next.js 15 and Tailwind CSS. Respond with only the code, no extra text.';
+        userPrompt = `Generate a root layout (app/layout.tsx) for a ${description}. Use Tailwind CSS, include a font, and basic structure.`;
+        break;
+      case 'packageJson':
+        systemPrompt = 'You are a full-stack developer. Generate a package.json for a Next.js 15 full-stack application with necessary dependencies. Respond with only the JSON, no extra text.';
+        userPrompt = `Generate a package.json for a ${description}. Include Next.js 15, React 19, Tailwind CSS, Prisma, bcrypt, jsonwebtoken, and other necessary dependencies.`;
+        break;
+      case 'libPrisma':
+        systemPrompt = 'You are a backend developer. Generate a lib/prisma.ts file to initialize Prisma client. Respond with only the code, no extra text.';
+        userPrompt = `Generate a lib/prisma.ts file for a ${description} to initialize and export Prisma client with proper error handling.`;
+        break;
+      case 'middleware':
+        systemPrompt = 'You are a backend developer. Generate a Next.js middleware.ts file to protect routes. Respond with only the code, no extra text.';
+        userPrompt = `Generate a middleware.ts file for a ${description} to protect dashboard routes using JWT authentication.`;
+        break;
+      default:
+        throw new Error('Invalid file type');
+    }
+
+    let code = null;
+    const markdown = await callLLM([
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ]);
+
+    if (markdown) {
+      code = extractCodeFromMarkdown(markdown);
+    } else {
+      code = getMockCodeContent(fileType, description);
+    }
+
+    return NextResponse.json({ code });
+  } catch (error) {
+    console.error('Generate code error:', error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Failed to generate code' },
+      { status: 500 }
+    );
+  }
+}
